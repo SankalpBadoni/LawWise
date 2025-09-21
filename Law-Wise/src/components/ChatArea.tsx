@@ -4,7 +4,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Hero } from "./Hero";
 import { useChat } from "@/contexts/chatContext";
-// Import our new component and its type
 // import { FileUpload, FileAttachment } from "./FileUpload";
 import { FileUpload, FileAttachment } from "./ui/file-upload";
 
@@ -167,7 +166,11 @@ export function ChatArea() {
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {currentChat?.messages.map((message) => (
             <div key={message.id} className={`flex ${message.isUser ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[80%] rounded-lg p-4 ${message.isUser ? 'bg-chat-user' : 'bg-chat-ai'}`}>
+              <div className={`max-w-[80%] rounded-lg p-4 ${
+                message.isUser 
+                  ? 'bg-blue-600 text-white' 
+                  : 'bg-[#1f2937] text-[#f9fafb]'
+              }`}>
                 {!message.isUser && (
                   <div className="flex items-center gap-2 mb-2">
                     <Scale className="h-4 w-4" />
