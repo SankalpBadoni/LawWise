@@ -1,61 +1,100 @@
 import { useState, useRef, useEffect } from "react";
-import { Send, Scale, X, FileText, Loader2 } from "lucide-react";
+import { Send, Scale, X, Loader2, Languages } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Hero } from "./Hero";
 import { useChat } from "@/contexts/chatContext";
-// import { FileUpload, FileAttachment } from "./FileUpload";
 import { FileUpload, FileAttachment } from "./ui/file-upload";
+
+// Define the structure for a message in the chat history for the backend
+interface BackendMessage {
+  role: 'user' | 'assistant';
+  content: string;
+}
 
 export function ChatArea() {
   const [inputValue, setInputValue] = useState("");
-  const [selectedFiles, setSelectedFiles] = useState<FileAttachment[]>([]); // For staging the file
+  const [selectedFiles, setSelectedFiles] = useState<FileAttachment[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const [showChat, setShowChat] = useState(false);
-  const [currentDocSessionId, setCurrentDocSessionId] = useState<string | null>(null);
-
+  
+  // --- NEW: State for language selection ---
+  const [language, setLanguage] = useState("English");
+  const [supportedLanguages, setSupportedLanguages] = useState<string[]>([]);
+  
   const { currentChat, createNewChat, addMessage, clearAllChats } = useChat();
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Scroll to the bottom of the chat on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [currentChat?.messages]);
 
+  // Sync UI state with context state
   useEffect(() => {
-    // Sync UI state with context state
     if (currentChat) setShowChat(true);
   }, [currentChat]);
 
-  // --- API LOGIC (Adapted from your working example) ---
+  // --- NEW: Fetch supported languages on component mount ---
+  useEffect(() => {
+    const fetchLanguages = async () => {
+      try {
+        const response = await fetch('https://lawwise.onrender.com/api/languages');
+        if (!response.ok) throw new Error('Failed to fetch languages');
+        const data = await response.json();
+        setSupportedLanguages(data.languages || []);
+      } catch (error) {
+        console.error("Error fetching languages:", error);
+        setSupportedLanguages(["English"]); // Fallback
+      }
+    };
+    fetchLanguages();
+  }, []);
 
-  const uploadAndProcessFile = async (attachment: FileAttachment): Promise<string> => {
+
+  // --- API LOGIC (UPDATED FOR NEW BACKEND) ---
+
+  const handleFileUpload = async (attachment: FileAttachment, userQuestion: string): Promise<string> => {
     const formData = new FormData();
     formData.append('pdfFile', attachment.file);
+    formData.append('language', language);
+    if (userQuestion) {
+      formData.append('userQuestion', userQuestion);
+    }
+
     try {
-      const response = await fetch('https://lawwise.onrender.com/api/upload', { method: 'POST', body: formData });
+      const response = await fetch('https://lawwise.onrender.com/api/upload', {
+        method: 'POST', 
+        body: formData 
+      });
       if (!response.ok) {
         const err = await response.json();
         throw new Error(err.error || 'Upload failed');
       }
       const result = await response.json();
-      if (result.sessionId) {
-        setCurrentDocSessionId(result.sessionId);
-      }
       return result.message || "Document analysis complete.";
     } catch (error) {
       return `Error processing file: ${error instanceof Error ? error.message : 'Unknown error'}`;
     }
   };
 
-  const handleFollowUpQuestion = async (question: string): Promise<string> => {
-    if (!currentDocSessionId) {
-      return "Document context lost. Please upload the document again.";
-    }
+  const handleChatMessage = async (question: string, history: BackendMessage[]): Promise<string> => {
     try {
       const response = await fetch('https://lawwise.onrender.com/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: currentDocSessionId, question }),
+        body: JSON.stringify({ 
+          message: question, 
+          chatHistory: history,
+          language: language
+        }),
       });
       if (!response.ok) {
         const err = await response.json();
@@ -68,15 +107,21 @@ export function ChatArea() {
     }
   };
 
-  // --- CORE LOGIC: Unified Send Handler ---
-
+  // --- CORE LOGIC: Unified Send Handler (UPDATED) ---
   const handleSendMessage = async () => {
     if ((!inputValue.trim() && selectedFiles.length === 0) || isProcessing) return;
 
     setIsProcessing(true);
-    // Ensure a chat exists
-    if (!currentChat) {
-      createNewChat();
+    let currentChatInstance = currentChat;
+    if (!currentChatInstance) {
+      const chatResult = createNewChat();
+      // If createNewChat returns a string (chatId), fetch the Chat object by id
+      if (typeof chatResult === "string") {
+        // You must implement or import getChatById from your context or state management
+        currentChatInstance = getChatById(chatResult);
+      } else {
+        currentChatInstance = chatResult;
+      }
     }
     setShowChat(true);
 
@@ -87,17 +132,25 @@ export function ChatArea() {
     const userMessageContent = currentInput || `Uploaded: ${currentFiles.map(f => f.name).join(', ')}`;
     addMessage(userMessageContent, true);
 
-    // Clear inputs
+    // Clear inputs for next message
     setInputValue("");
     setSelectedFiles([]);
 
     let aiResponseContent = "";
+
+    // Map frontend chat history to the format the backend expects
+    const backendChatHistory: BackendMessage[] = (currentChatInstance?.messages || [])
+      .map(msg => ({
+        role: msg.isUser ? 'user' as 'user' : 'assistant' as 'assistant',
+        content: msg.content
+      }));
+
     if (currentFiles.length > 0) {
-      // It's a new document upload
-      aiResponseContent = await uploadAndProcessFile(currentFiles[0]);
+      // It's a new document upload (with an optional initial question)
+      aiResponseContent = await handleFileUpload(currentFiles[0], currentInput);
     } else {
       // It's a follow-up question
-      aiResponseContent = await handleFollowUpQuestion(currentInput);
+      aiResponseContent = await handleChatMessage(currentInput, backendChatHistory);
     }
     
     addMessage(aiResponseContent, false);
@@ -113,7 +166,6 @@ export function ChatArea() {
 
   const handleClearChat = () => {
     clearAllChats();
-    setCurrentDocSessionId(null);
     setShowChat(false);
   };
 
@@ -122,33 +174,49 @@ export function ChatArea() {
     setShowChat(true);
   };
 
-  // --- JSX Rendering ---
+  // --- JSX Rendering (Added Language Selector) ---
+
+  const inputArea = (
+    <div className="border-t border-border p-6 bg-card">
+      <div className="max-w-4xl mx-auto space-y-2">
+        <FileUpload
+          onFilesSelected={setSelectedFiles}
+          selectedFiles={selectedFiles}
+          onRemoveFile={(fileId) => setSelectedFiles(prev => prev.filter(f => f.id !== fileId))}
+        />
+        <div className="flex gap-3">
+          <Input
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyPress={handleKeyPress}
+            placeholder={showChat ? "Ask a follow-up question..." : "Ask a question or upload a document..."}
+            disabled={isProcessing}
+          />
+          {/* --- NEW: Language Selector --- */}
+          <Select value={language} onValueChange={setLanguage} disabled={isProcessing}>
+            <SelectTrigger className="w-[150px]">
+              <Languages className="h-4 w-4 mr-2"/>
+              <SelectValue placeholder="Language" />
+            </SelectTrigger>
+            <SelectContent>
+              {supportedLanguages.map(lang => (
+                <SelectItem key={lang} value={lang}>{lang}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button onClick={handleSendMessage} disabled={(!inputValue.trim() && selectedFiles.length === 0) || isProcessing} size="icon" className="bg-gradient-primary text-black">
+            {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
 
   if (!showChat) {
     return (
       <main className="flex-1 flex flex-col bg-background">
         <Hero onTryDemo={handleTryDemo} />
-        <div className="border-t border-border p-6 bg-card">
-          <div className="max-w-4xl mx-auto space-y-2">
-            <FileUpload
-              onFilesSelected={setSelectedFiles}
-              selectedFiles={selectedFiles}
-              onRemoveFile={(fileId) => setSelectedFiles(prev => prev.filter(f => f.id !== fileId))}
-            />
-            <div className="flex gap-3">
-              <Input
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder="Ask a question or upload a document..."
-                disabled={isProcessing}
-              />
-              <Button onClick={handleSendMessage} disabled={(!inputValue.trim() && selectedFiles.length === 0) || isProcessing} size="icon" className="bg-gradient-primary text-black">
-                {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-              </Button>
-            </div>
-          </div>
-        </div>
+        {inputArea}
       </main>
     );
   }
@@ -182,31 +250,25 @@ export function ChatArea() {
               </div>
             </div>
           ))}
+          {isProcessing && (
+             <div className="flex justify-start">
+               <div className="max-w-[80%] rounded-lg p-4 bg-[#1f2937] text-[#f9fafb]">
+                <div className="flex items-center gap-2">
+                   <Loader2 className="h-4 w-4 animate-spin" />
+                   <span className="text-sm font-medium">LawWise is thinking...</span>
+                 </div>
+               </div>
+             </div>
+          )}
           <div ref={messagesEndRef} />
         </div>
       </div>
       
-      <div className="border-t border-border p-6 bg-card">
-        <div className="max-w-4xl mx-auto space-y-2">
-          <FileUpload
-            onFilesSelected={setSelectedFiles}
-            selectedFiles={selectedFiles}
-            onRemoveFile={(fileId) => setSelectedFiles(prev => prev.filter(f => f.id !== fileId))}
-          />
-          <div className="flex gap-3">
-            <Input
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyPress={handleKeyPress}
-              placeholder="Ask a follow-up question..."
-              disabled={isProcessing}
-            />
-            <Button onClick={handleSendMessage} disabled={(!inputValue.trim() && selectedFiles.length === 0) || isProcessing} size="icon" className="bg-gradient-primary text-black">
-              {isProcessing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-            </Button>
-          </div>
-        </div>
-      </div>
+      {inputArea}
     </main>
   );
+}
+
+function getChatById(chatResult: string): import("./types").Chat {
+  throw new Error("Function not implemented.");
 }
