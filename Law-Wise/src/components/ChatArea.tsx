@@ -33,7 +33,7 @@ export function ChatArea() {
     const formData = new FormData();
     formData.append('pdfFile', attachment.file);
     try {
-      const response = await fetch('http://localhost:5000/api/upload', { method: 'POST', body: formData });
+      const response = await fetch('https://lawwise.onrender.com/api/upload', { method: 'POST', body: formData });
       if (!response.ok) {
         const err = await response.json();
         throw new Error(err.error || 'Upload failed');
@@ -53,7 +53,7 @@ export function ChatArea() {
       return "Document context lost. Please upload the document again.";
     }
     try {
-      const response = await fetch('http://localhost:5000/api/chat', {
+      const response = await fetch('https://lawwise.onrender.com/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId: currentDocSessionId, question }),
